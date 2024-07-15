@@ -15,7 +15,10 @@ import {
   AIMessageChunk,
   type BaseMessage,
   ChatMessage,
+  HumanMessage,
   OpenAIToolCall,
+  SystemMessage,
+  ToolMessage,
 } from '@langchain/core/messages'
 import type { ChatResult } from '@langchain/core/outputs'
 import {
@@ -31,9 +34,9 @@ import { getLogger } from '~/common/interceptors/logging.interceptor'
 
 export type VolcMessageRole = 'system' | 'assistant' | 'user' | 'tool'
 
-interface VolcMessage {
-  role: VolcMessageRole
-  content?: string
+interface VolcMessage /* extends BaseMessage */ {
+  role?: VolcMessageRole
+  content: string
 }
 
 interface VolcNormalMessage extends VolcMessage {
@@ -215,7 +218,68 @@ export interface ChatOpenAICallOptions
   parallel_tool_calls?: boolean
 }
 
-function messageToRole(message: BaseMessage): VolcMessageRole {
+// function convertToMessage(message: BaseMessage) {
+//   const role = delta.role ?? defaultRole
+//   const content = delta.content ?? ''
+//   let additional_kwargs
+//   if (delta.function_call) {
+//     additional_kwargs = {
+//       function_call: delta.function_call,
+//     }
+//   }
+//   else if (delta.tool_calls) {
+//     additional_kwargs = {
+//       tool_calls: delta.tool_calls,
+//     }
+//   }
+//   else {
+//     additional_kwargs = {}
+//   }
+//   if (role === 'user') {
+//     return new HumanMessageChunk({ content })
+//   }
+//   else if (role === 'assistant') {
+//     const toolCallChunks = []
+//     if (Array.isArray(delta.tool_calls)) {
+//       for (const rawToolCall of delta.tool_calls) {
+//         toolCallChunks.push({
+//           name: rawToolCall.function?.name,
+//           args: rawToolCall.function?.arguments,
+//           id: rawToolCall.id,
+//           index: rawToolCall.index,
+//         })
+//       }
+//     }
+//     return new AIMessageChunk({
+//       content,
+//       tool_call_chunks: toolCallChunks,
+//       additional_kwargs,
+//       id: messageId,
+//     })
+//   }
+//   else if (role === 'system') {
+//     return new SystemMessageChunk({ content })
+//   }
+//   else if (role === 'function') {
+//     return new FunctionMessageChunk({
+//       content,
+//       additional_kwargs,
+//       name: delta.name,
+//     })
+//   }
+//   else if (role === 'tool') {
+//     return new ToolMessageChunk({
+//       content,
+//       additional_kwargs,
+//       tool_call_id: delta.tool_call_id,
+//     })
+//   }
+//   else {
+//     return new ChatMessageChunk({ content, role })
+//   }
+// }
+
+function getMessageRole(message: BaseMessage): VolcMessageRole {
   const type = message._getType()
   switch (type) {
     case 'ai':
@@ -225,13 +289,30 @@ function messageToRole(message: BaseMessage): VolcMessageRole {
     case 'system':
       return 'system'
     case 'function':
-      throw new Error('Function messages not supported yet')
+    case 'tool':
+      return 'tool'
+    default:
+      throw new Error(`Unknown message type: ${type}`)
+  }
+}
+
+function convertToMessage(message: BaseMessage/* , meta?: { name: any, additional_kwargs: any, tool_call_id: string } */): BaseMessage {
+  const type = message._getType()
+  switch (type) {
+    case 'ai':
+      return new AIMessage({ ...message })
+    case 'human':
+      return new HumanMessage({ ...message })
+    case 'system':
+      return new SystemMessage({ ...message })
+    // case 'function':
+    //   return new FunctionMessage({ ...message, ...meta })
     case 'generic': {
       if (!ChatMessage.isInstance(message)) {
         throw new Error('Invalid generic chat message')
       }
       if (['system', 'assistant', 'user'].includes(message.role)) {
-        return message.role as VolcMessageRole
+        return message
       }
       throw new Error(`Unknown message type: ${type}`)
     }
@@ -412,20 +493,24 @@ export class ChatVolc<
   ): Promise<ChatResult> {
     const parameters = this.invocationParams(options)
 
-    const messagesMapped: VolcMessage[] = messages.map(message => ({
-      role: messageToRole(message),
-      content: message.content as string,
-    }))
+    const messagesMapped: VolcMessage[] = messages.map((message) => {
+      return {
+        role: getMessageRole(message),
+        content: message.content as string,
+      }
+    })
 
     console.log('parameters', parameters)
 
     let chunk
+    const addonData: Record<string, any> = {}
 
     const data = parameters.stream
       ? await new Promise<ChatCompletionResponse>((resolve, reject) => {
         let response: ChatCompletionResponse
         let rejected = false
         let resolved = false
+
         this.completionWithRetry(
           {
             ...parameters,
@@ -473,12 +558,17 @@ export class ChatVolc<
                 }
               }
 
-              const toolMessageChunk = new AIMessage({
+              const toolMessageChunk = new ToolMessage({
                 content: response.output.text,
                 additional_kwargs: { tool_calls: delta.tool_calls },
-                // tool_call_chunks: toolCallChunks,
+                tool_call_id: delta.tool_calls[0].id,
                 id: data.id,
               })
+
+              addonData.messages = {
+                tool_calls: delta.tool_calls,
+              }
+              addonData.finish_reason = finish_reason
 
               chunk = toolMessageChunk
 
@@ -544,6 +634,10 @@ export class ChatVolc<
         {
           text,
           message: chunk ?? new AIMessage(text),
+          generationInfo: {
+            ...(addonData ?? {}),
+            ...(addonData?.messages ?? {}),
+          },
         },
       ],
       llmOutput: {

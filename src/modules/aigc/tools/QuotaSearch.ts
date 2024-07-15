@@ -1,5 +1,4 @@
 import { Tool } from '@langchain/core/tools'
-import searchEngineTool from 'search-engine-tool'
 
 interface BaseParameters {
 
@@ -49,25 +48,109 @@ export class QuotaSearchAPI extends Tool {
   name = 'search'
 
   /** @ignore */
-  _call(input: string) {
+  async _call(input: string) {
     const { timeout, ...params } = this.params
 
-    return new Promise<string>((resolve, reject) => {
-      setTimeout(() => resolve('timeout'), timeout ?? 10000)
+    console.log('searching', input, params.query, params.engine)
 
-      try {
-        searchEngineTool(input + params.query, params.engine ?? 'bing')
-          .then((results: any) => {
-            resolve(JSON.stringify(results))
-          })
-      }
-      catch (e) {
-        console.error(e)
-        reject(e)
-      }
+    const res = await fetch(`https://search.tagzxia.com/search?q=${encodeURIComponent(input + params.query)}`, {
+      method: 'GET',
+      signal: timeout ? AbortSignal.timeout(timeout) : undefined,
     })
+
+    const str = await res.json()
+
+    console.log('str', str, typeof str)
+
+    return JSON.stringify(str)
   }
 
   description
     = 'a search engine. useful for when you need to answer questions about current events. input should be a search query.'
+}
+
+export class QuotaSearchImagesAPI extends Tool {
+  static lc_name() {
+    return 'QuotaSearchImagesAPI'
+  }
+
+  toJSON() {
+    return this.toJSONNotImplemented()
+  }
+
+  protected params: Partial<QuotaSearchAPIParameters>
+
+  constructor(
+    params: Partial<QuotaSearchAPIParameters> = {},
+  ) {
+    super()
+
+    this.params = params
+  }
+
+  name = 'search-images'
+
+  /** @ignore */
+  async _call(input: string) {
+    const { timeout, ...params } = this.params
+
+    console.log('searching', input, params.query, params.engine)
+
+    const res = await fetch(`https://search.tagzxia.com/searchImages?q=${encodeURIComponent(input + params.query)}&max_results=5`, {
+      method: 'GET',
+      signal: timeout ? AbortSignal.timeout(timeout) : undefined,
+    })
+
+    const str = await res.json()
+
+    console.log('str', str, typeof str)
+
+    return JSON.stringify(str)
+  }
+
+  description
+    = 'a search engine. useful for when you need to answer images about relative/current/history events. input should be a search query.'
+}
+
+export class QuotaSearchVideosAPI extends Tool {
+  static lc_name() {
+    return 'QuotaSearchVideosAPI'
+  }
+
+  toJSON() {
+    return this.toJSONNotImplemented()
+  }
+
+  protected params: Partial<QuotaSearchAPIParameters>
+
+  constructor(
+    params: Partial<QuotaSearchAPIParameters> = {},
+  ) {
+    super()
+
+    this.params = params
+  }
+
+  name = 'search-videos'
+
+  /** @ignore */
+  async _call(input: string) {
+    const { timeout, ...params } = this.params
+
+    console.log('searching', input, params.query, params.engine)
+
+    const res = await fetch(`https://search.tagzxia.com/searchVideos?q=${encodeURIComponent(input + params.query)}&max_results=3`, {
+      method: 'GET',
+      signal: timeout ? AbortSignal.timeout(timeout) : undefined,
+    })
+
+    const str = await res.json()
+
+    console.log('str', str, typeof str)
+
+    return JSON.stringify(str)
+  }
+
+  description
+    = 'a search engine. useful for when you need to answer videos about relative/current/history events. input should be a search query.'
 }
